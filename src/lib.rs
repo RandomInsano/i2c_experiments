@@ -30,13 +30,26 @@ struct Message<'a> {
 }
 
 impl<'a> Message<'a> {
-    pub fn new(data: &'a [u8]) -> Message<'a> {
+    pub fn read(data: &'a [u8]) -> Message<'a> {
         if data.len() > std::u16::MAX as usize {
             panic!("Tried to pack a message greater than {}", std::u16::MAX);
         } else {
             Message {
                 addr: 0x1,
-                flags: I2C_M_RD,
+                flags: I2C_M_RD | I2C_M_NOSTART,
+                len: data.len() as u16,
+                buffer: data,
+            }
+        }
+    }
+
+    pub fn write(data: &'a [u8]) -> Message<'a> {
+        if data.len() > std::u16::MAX as usize {
+            panic!("Tried to pack a message greater than {}", std::u16::MAX);
+        } else {
+            Message {
+                addr: 0x1,
+                flags: I2C_M_NOSTART,
                 len: data.len() as u16,
                 buffer: data,
             }
@@ -62,9 +75,9 @@ mod tests {
     #[test]
     fn build_structure() {
         let items = [
-            Message::new(&[0u8; 12]),
-            Message::new(&[0u8; 13]),
-            Message::new(&[0u8; 14]),
+            Message::write(&[0u8; 12]),
+            Message::read(&[0u8; 13]),
+            Message::write(&[0u8; 14]),
         ];
 
         let i2c_data = IoctlData {
@@ -78,7 +91,10 @@ mod tests {
         assert!(file_result.is_ok());
 
         unsafe {
-            ioctl(file_result.unwrap().as_raw_fd(), I2C_RDWR, &i2c_data);
+            let r = ioctl(file_result.unwrap().as_raw_fd(), I2C_RDWR, &i2c_data);
+
+            // It seems that I2C_RDWR returns negative values on failure?
+            assert!(r >= 0);
         }
     }
 
