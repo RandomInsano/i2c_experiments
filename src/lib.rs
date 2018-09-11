@@ -17,7 +17,7 @@ const I2C_M_REV_DIR_ADDR: u16 = 0x2000; /* if I2C_FUNC_PROTOCOL_MANGLING */
 const I2C_M_NOSTART: u16 = 0x4000; /* if I2C_FUNC_NOSTART */
 const I2C_M_STOP: u16 = 0x8000; /* if I2C_FUNC_PROTOCOL_MANGLING */ 
 
-const I2C_RDWR: u64 = 0x0707;
+const I2C_RDWR: u32 = 0x0707;
 const I2C_RDRW_IOCTL_MAX_MSGS: u8 = 42;
 
 #[repr(C)]
@@ -97,11 +97,4 @@ mod tests {
             assert!(r >= 0);
         }
     }
-
-    /*
-    pub unsafe fn spi_read_mode(fd: c_int, data: *mut u8) -> Result<c_int> {
-        let res = libc::ioctl(fd, ior!(SPI_IOC_MAGIC, SPI_IOC_TYPE_MODE, mem::size_of::<u8>()), data);
-        Errno::result(res)
-    }
-    */
 }
