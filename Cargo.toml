@@ -1,0 +1,7 @@
+[package]
+name = "i2c_experiements"
+version = "0.1.0"
+authors = ["Edwin Amsler <edwinguy@gmail.com>"]
+
+[dependencies]
+libc = "0.2"
