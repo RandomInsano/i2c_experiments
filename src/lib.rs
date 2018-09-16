@@ -1,12 +1,16 @@
 
 #![allow(unused)]
 
-extern crate libc;
+#[macro_use]
+extern crate nix;
+extern crate errno;
 
-use libc::ioctl;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::mem;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::prelude::*;
 
 const I2C_M_RD: u16 = 0x0001; /* read data, from slave to master */
 const I2C_M_TEN: u16 = 0x0010; /* this is a ten bit chip address */
@@ -21,6 +25,7 @@ const I2C_RDWR: u32 = 0x0707;
 const I2C_RDRW_IOCTL_MAX_MSGS: u8 = 42;
 
 #[repr(C)]
+#[derive(Debug)]
 #[allow(non_camel_case_types)]
 struct Message<'a> {
     addr: u16,
@@ -35,8 +40,8 @@ impl<'a> Message<'a> {
             panic!("Tried to pack a message greater than {}", std::u16::MAX);
         } else {
             Message {
-                addr: 0x1,
-                flags: I2C_M_RD | I2C_M_NOSTART,
+                addr: 0x34,
+                flags: I2C_M_RD,
                 len: data.len() as u16,
                 buffer: data,
             }
@@ -48,8 +53,8 @@ impl<'a> Message<'a> {
             panic!("Tried to pack a message greater than {}", std::u16::MAX);
         } else {
             Message {
-                addr: 0x1,
-                flags: I2C_M_NOSTART,
+                addr: 0x34,
+                flags: 0,
                 len: data.len() as u16,
                 buffer: data,
             }
@@ -57,9 +62,11 @@ impl<'a> Message<'a> {
     }
 }
 
+ioctl!(bad write_ptr i2c_rdrw with I2C_RDWR; IoctlData);
+
 #[repr(C)]
 #[allow(non_camel_case_types)]
-struct IoctlData<'a> { 
+pub struct IoctlData<'a> { 
     messages: &'a [Message<'a>],
     count: i32,
 }
@@ -70,14 +77,14 @@ mod tests {
 
     use super::*;
 
-    /// This mostly exists to make sure I'm coding things properly. The length
-    /// isn't something that's going to break.
     #[test]
     fn build_structure() {
+        let message = [2u8; 1];
+        let data = [0u8; 1];
+
         let items = [
-            Message::write(&[0u8; 12]),
-            Message::read(&[0u8; 13]),
-            Message::write(&[0u8; 14]),
+            Message::write(&message),
+            //Message::read(&data),
         ];
 
         let i2c_data = IoctlData {
@@ -85,16 +92,41 @@ mod tests {
             count: items.len() as i32,
         };
 
-        let file_result = File::open("/dev/i2c-0");
+        let file_result = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/i2c-0");
 
-        assert!(i2c_data.messages.len() == 3);
         assert!(file_result.is_ok());
 
-        unsafe {
-            let r = ioctl(file_result.unwrap().as_raw_fd(), I2C_RDWR, &i2c_data);
+        let fd = file_result.unwrap().as_raw_fd();
+        println!("File descriptor: {}", fd);
 
-            // It seems that I2C_RDWR returns negative values on failure?
-            assert!(r >= 0);
+        println!("Debugging: (memory dump of struct)");
+        let size = mem::size_of::<[Message;1]>();
+        unsafe {
+            let slice: &[u8] = std::mem::transmute(std::slice::from_raw_parts(&items, size));
+            for i in slice {
+                print!("{:02x} ", i);
+            }
+        }
+
+        println!("Debug output: {:?}", items);
+
+        unsafe {
+            println!();
+            match i2c_rdrw(fd, &i2c_data) {
+                Err(x) => {
+                    println!("Error: {:?}", x);
+                    panic!("Ioctl failed!");
+                },
+                Ok(x) => {
+                    println!("Ok: {:?}", x);
+                    println!("Data: {:?}", data);
+                },
+            }
+            println!();
+
         }
     }
 }
