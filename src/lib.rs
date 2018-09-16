@@ -27,15 +27,15 @@ const I2C_RDRW_IOCTL_MAX_MSGS: u8 = 42;
 #[repr(C)]
 #[derive(Debug)]
 #[allow(non_camel_case_types)]
-struct Message<'a> {
+struct Message {
     addr: u16,
     flags: u16,
     len: u16,
-    buffer: &'a [u8],
+    buffer: *const u8,
 }
 
-impl<'a> Message<'a> {
-    pub fn read(data: &'a [u8]) -> Message<'a> {
+impl Message {
+    pub fn read(data: &[u8]) -> Message {
         if data.len() > std::u16::MAX as usize {
             panic!("Tried to pack a message greater than {}", std::u16::MAX);
         } else {
@@ -43,12 +43,12 @@ impl<'a> Message<'a> {
                 addr: 0x34,
                 flags: I2C_M_RD,
                 len: data.len() as u16,
-                buffer: data,
+                buffer: unsafe { data.as_ptr() },
             }
         }
     }
 
-    pub fn write(data: &'a [u8]) -> Message<'a> {
+    pub fn write(data: &[u8]) -> Message {
         if data.len() > std::u16::MAX as usize {
             panic!("Tried to pack a message greater than {}", std::u16::MAX);
         } else {
@@ -56,7 +56,7 @@ impl<'a> Message<'a> {
                 addr: 0x34,
                 flags: 0,
                 len: data.len() as u16,
-                buffer: data,
+                buffer: unsafe { data.as_ptr() },
             }
         }
     }
@@ -66,8 +66,8 @@ ioctl!(bad write_ptr i2c_rdrw with I2C_RDWR; IoctlData);
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-pub struct IoctlData<'a> { 
-    messages: &'a [Message<'a>],
+pub struct IoctlData { 
+    messages: *const Message,
     count: i32,
 }
 
@@ -79,17 +79,19 @@ mod tests {
 
     #[test]
     fn build_structure() {
-        let message = [2u8; 1];
-        let data = [0u8; 1];
+        let mut message = [2u8; 1];
+        let mut data = [0u8; 1];
 
-        let items = [
+        let mut items = [
             Message::write(&message),
-            //Message::read(&data),
+            Message::read(&data),
         ];
 
-        let i2c_data = IoctlData {
-            messages: &items,
-            count: items.len() as i32,
+        let i2c_data = unsafe { 
+            IoctlData {
+                messages: items.as_ptr(),
+                count: items.len() as i32,
+            }
         };
 
         let file_result = OpenOptions::new()
@@ -103,7 +105,7 @@ mod tests {
         println!("File descriptor: {}", fd);
 
         println!("Debugging: (memory dump of struct)");
-        let size = mem::size_of::<[Message;1]>();
+        let size = mem::size_of::<[Message;2]>();
         unsafe {
             let slice: &[u8] = std::mem::transmute(std::slice::from_raw_parts(&items, size));
             for i in slice {
@@ -115,7 +117,7 @@ mod tests {
 
         unsafe {
             println!();
-            match i2c_rdrw(fd, &i2c_data) {
+            match i2c_rdrw(fd, &i2c_data as *const IoctlData) {
                 Err(x) => {
                     println!("Error: {:?}", x);
                     panic!("Ioctl failed!");
