@@ -1,6 +1,9 @@
 
 #![allow(unused)]
 
+/// Notes:
+/// Implementation of i2c ioctls: https://github.com/torvalds/linux/blob/master/drivers/i2c/i2c-dev.c#L439
+
 #[macro_use]
 extern crate nix;
 extern crate errno;
@@ -22,7 +25,9 @@ const I2C_M_NOSTART: u16 = 0x4000; /* if I2C_FUNC_NOSTART */
 const I2C_M_STOP: u16 = 0x8000; /* if I2C_FUNC_PROTOCOL_MANGLING */ 
 
 const I2C_RDWR: u32 = 0x0707;
+
 const I2C_RDRW_IOCTL_MAX_MSGS: u8 = 42;
+const I2C_MAX_LEN: usize = 8192; // Magic value from i2cdev.c
 
 #[repr(C)]
 #[derive(Debug)]
@@ -36,33 +41,33 @@ struct Message {
 
 impl Message {
     pub fn read(data: &[u8]) -> Message {
-        if data.len() > std::u16::MAX as usize {
-            panic!("Tried to pack a message greater than {}", std::u16::MAX);
+        if data.len() > I2C_MAX_LEN {
+            panic!("Tried to pack a message greater than {}", I2C_MAX_LEN);
         } else {
             Message {
                 addr: 0x34,
                 flags: I2C_M_RD,
                 len: data.len() as u16,
-                buffer: unsafe { data.as_ptr() },
+                buffer: data.as_ptr(),
             }
         }
     }
 
     pub fn write(data: &[u8]) -> Message {
-        if data.len() > std::u16::MAX as usize {
-            panic!("Tried to pack a message greater than {}", std::u16::MAX);
+        if data.len() > I2C_MAX_LEN as usize {
+            panic!("Tried to pack a message greater than {}", I2C_MAX_LEN);
         } else {
             Message {
                 addr: 0x34,
                 flags: 0,
                 len: data.len() as u16,
-                buffer: unsafe { data.as_ptr() },
+                buffer: data.as_ptr(),
             }
         }
     }
 }
 
-ioctl!(bad write_ptr i2c_rdrw with I2C_RDWR; IoctlData);
+ioctl_write_ptr_bad!(i2c_rdrw, I2C_RDWR, IoctlData);
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
@@ -87,48 +92,35 @@ mod tests {
             Message::read(&data),
         ];
 
-        let i2c_data = unsafe { 
-            IoctlData {
-                messages: items.as_ptr(),
-                count: items.len() as i32,
-            }
+        let i2c_data = IoctlData {
+            messages: items.as_ptr(),
+            count: items.len() as i32,
         };
 
         let file_result = OpenOptions::new()
             .read(true)
             .write(true)
             .open("/dev/i2c-0");
-
         assert!(file_result.is_ok());
 
-        let fd = file_result.unwrap().as_raw_fd();
+        let file = file_result.unwrap();
+        let fd = file.as_raw_fd();
+
         println!("File descriptor: {}", fd);
-
-        println!("Debugging: (memory dump of struct)");
-        let size = mem::size_of::<[Message;2]>();
-        unsafe {
-            let slice: &[u8] = std::mem::transmute(std::slice::from_raw_parts(&items, size));
-            for i in slice {
-                print!("{:02x} ", i);
-            }
-        }
-
-        println!("Debug output: {:?}", items);
 
         unsafe {
             println!();
-            match i2c_rdrw(fd, &i2c_data as *const IoctlData) {
+
+            match i2c_rdrw(fd, &i2c_data) {
                 Err(x) => {
                     println!("Error: {:?}", x);
-                    panic!("Ioctl failed!");
+                    panic!("ioclt failed!");
                 },
                 Ok(x) => {
                     println!("Ok: {:?}", x);
                     println!("Data: {:?}", data);
                 },
             }
-            println!();
-
         }
     }
 }

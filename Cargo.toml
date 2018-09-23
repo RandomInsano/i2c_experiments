@@ -6,4 +6,4 @@ authors = ["Edwin Amsler <edwinguy@gmail.com>"]
 [dependencies]
 libc = "0.2"
 errno = "0.2"
-nix = "0.10"
+nix = "0.11"
