@@ -84,11 +84,11 @@ mod tests {
 
     #[test]
     fn build_structure() {
-        let mut message = [2u8; 1];
+        const MESSAGE: &'static [u8] = &[0x02];
         let mut data = [0u8; 1];
 
         let mut items = [
-            Message::write(&message),
+            Message::write(&MESSAGE),
             Message::read(&data),
         ];
 
