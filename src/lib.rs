@@ -1,5 +1,7 @@
+//! Experiments in getting Linux's I2C_RDWR ioctlto work in Rust
 
 #![allow(unused)]
+#![deny(missing_docs)]
 
 /// Notes:
 /// Implementation of i2c ioctls: https://github.com/torvalds/linux/blob/master/drivers/i2c/i2c-dev.c#L439
@@ -24,8 +26,6 @@ const I2C_M_IGNORE_NAK: u16 = 0x1000; /* if I2C_FUNC_PROTOCOL_MANGLING */
 const I2C_M_REV_DIR_ADDR: u16 = 0x2000; /* if I2C_FUNC_PROTOCOL_MANGLING */
 const I2C_M_NOSTART: u16 = 0x4000; /* if I2C_FUNC_NOSTART */
 const I2C_M_STOP: u16 = 0x8000; /* if I2C_FUNC_PROTOCOL_MANGLING */ 
-
-const I2C_RDWR: u32 = 0x0707;
 
 const I2C_RDRW_IOCTL_MAX_MSGS: u8 = 42;
 const I2C_MAX_LEN: usize = 8192; // Magic value from i2cdev.c
@@ -60,15 +60,23 @@ impl Factory {
         Ok(factory)
     }
 
-    /// This should live elsewhere, or the factory should be extended
+    /// Send transaction to i2c hardware. Note that this function will panic!()
+    /// if you provide more than `I2C_MAX_LEN` messages to save from difficult
+    /// troubleshooting later.
     pub fn send(&self, messages: &[Message]) -> Result<(), nix::Error> {
+        // TODO: Create a custom error type to avoid the panic!
+        // TODO: Differentiate EBADF error on the dev tree vs. i2c slave device
+        if messages.len() > I2C_MAX_LEN {
+            panic!("Linux only allows {} message per transaction", I2C_MAX_LEN);
+        }
+
         let i2c_data = IoctlData {
             messages: messages.as_ptr(),
             count: messages.len() as i32,
         };
 
         unsafe {
-            i2c_rdrw(self.file.as_raw_fd(), &i2c_data)?;
+            ioctl::i2c_rdwr(self.file.as_raw_fd(), &i2c_data)?;
         }
 
         Ok(())
@@ -77,6 +85,7 @@ impl Factory {
 
 impl Factory {
     pub fn custom(&self, data: &[u8], address: u16, flags: u16) -> Message {
+        // TODO: Find a better way to inform users of too many messages than killing their app
         if data.len() > I2C_MAX_LEN {
             panic!("Tried to pack a message greater than {}", I2C_MAX_LEN);
         } else {
@@ -98,11 +107,20 @@ impl Factory {
     }
 }
 
-ioctl_write_ptr_bad!(i2c_rdrw, I2C_RDWR, IoctlData);
+mod ioctl {
+    use super::IoctlData;
+
+    const I2C_RDWR: u32 = 0x0707;
+
+    /// Call to I2C_RDWR. Not to be used by external folk
+    ioctl_write_ptr_bad!(i2c_rdwr, I2C_RDWR, IoctlData);
+}
 
 #[repr(C)]
-#[allow(non_camel_case_types)]
-pub struct IoctlData { 
+/// Structure for packing data to be sent to I2C_RDWR
+pub struct IoctlData {
+    // TODO: How the heck to I have a private ioctl so this can be hidden
+    // away from users
     messages: *const Message,
     count: i32,
 }
