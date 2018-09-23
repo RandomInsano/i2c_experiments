@@ -67,7 +67,7 @@ impl Factory {
         // TODO: Create a custom error type to avoid the panic!
         // TODO: Differentiate EBADF error on the dev tree vs. i2c slave device
         if messages.len() > I2C_RDRW_IOCTL_MAX_MSGS {
-            panic!("Linux only allows {} message per transaction", I2C_MAX_LEN);
+            panic!("Linux only allows {} message per transaction", I2C_RDRW_IOCTL_MAX_MSGS);
         }
 
         let i2c_data = IoctlData {
