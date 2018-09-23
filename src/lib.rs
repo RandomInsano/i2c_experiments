@@ -11,6 +11,7 @@ extern crate errno;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::io;
 use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::*;
@@ -39,31 +40,61 @@ struct Message {
     buffer: *const u8,
 }
 
-impl Message {
-    pub fn read(data: &[u8]) -> Message {
+struct Factory {
+    file: File,
+    addr: u16,
+}
+
+impl Factory {
+    pub fn new(device: &str, addr: u16) -> Result<Self, io::Error> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/i2c-0")?;
+
+        let factory = Self {
+            file,
+            addr,
+        };
+
+        Ok(factory)
+    }
+
+    /// This should live elsewhere, or the factory should be extended
+    pub fn send(&self, messages: &[Message]) -> Result<(), nix::Error> {
+        let i2c_data = IoctlData {
+            messages: messages.as_ptr(),
+            count: messages.len() as i32,
+        };
+
+        unsafe {
+            i2c_rdrw(self.file.as_raw_fd(), &i2c_data)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Factory {
+    pub fn custom(&self, data: &[u8], address: u16, flags: u16) -> Message {
         if data.len() > I2C_MAX_LEN {
             panic!("Tried to pack a message greater than {}", I2C_MAX_LEN);
         } else {
             Message {
-                addr: 0x34,
-                flags: I2C_M_RD,
+                addr: self.addr,
+                flags,
                 len: data.len() as u16,
                 buffer: data.as_ptr(),
             }
         }
     }
 
-    pub fn write(data: &[u8]) -> Message {
-        if data.len() > I2C_MAX_LEN as usize {
-            panic!("Tried to pack a message greater than {}", I2C_MAX_LEN);
-        } else {
-            Message {
-                addr: 0x34,
-                flags: 0,
-                len: data.len() as u16,
-                buffer: data.as_ptr(),
-            }
-        }
+    pub fn read(&self, data: &[u8]) -> Message {
+        self.custom(data, self.addr, I2C_M_RD)
+    }
+
+    pub fn write(&self, data: &[u8]) -> Message {
+        self.custom(data, self.addr, 0)
     }
 }
 
@@ -87,40 +118,15 @@ mod tests {
         const MESSAGE: &'static [u8] = &[0x02];
         let mut data = [0u8; 1];
 
-        let mut items = [
-            Message::write(&MESSAGE),
-            Message::read(&data),
+        let builder = Factory::new("/dev/i2c-0", 0x34).unwrap();
+        let items = [
+            builder.write(&MESSAGE),
+            builder.read(&data),
         ];
 
-        let i2c_data = IoctlData {
-            messages: items.as_ptr(),
-            count: items.len() as i32,
-        };
+        builder.send(&items);
 
-        let file_result = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/i2c-0");
-        assert!(file_result.is_ok());
-
-        let file = file_result.unwrap();
-        let fd = file.as_raw_fd();
-
-        println!("File descriptor: {}", fd);
-
-        unsafe {
-            println!();
-
-            match i2c_rdrw(fd, &i2c_data) {
-                Err(x) => {
-                    println!("Error: {:?}", x);
-                    panic!("ioclt failed!");
-                },
-                Ok(x) => {
-                    println!("Ok: {:?}", x);
-                    println!("Data: {:?}", data);
-                },
-            }
-        }
+        // Device specific
+        assert!(data[0] == 0x04);
     }
 }
