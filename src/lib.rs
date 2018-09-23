@@ -1,12 +1,19 @@
 
 #![allow(unused)]
 
-extern crate libc;
+/// Notes:
+/// Implementation of i2c ioctls: https://github.com/torvalds/linux/blob/master/drivers/i2c/i2c-dev.c#L439
 
-use libc::ioctl;
+#[macro_use]
+extern crate nix;
+extern crate errno;
+
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::mem;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::prelude::*;
 
 const I2C_M_RD: u16 = 0x0001; /* read data, from slave to master */
 const I2C_M_TEN: u16 = 0x0010; /* this is a ten bit chip address */
@@ -17,50 +24,55 @@ const I2C_M_REV_DIR_ADDR: u16 = 0x2000; /* if I2C_FUNC_PROTOCOL_MANGLING */
 const I2C_M_NOSTART: u16 = 0x4000; /* if I2C_FUNC_NOSTART */
 const I2C_M_STOP: u16 = 0x8000; /* if I2C_FUNC_PROTOCOL_MANGLING */ 
 
-const I2C_RDWR: u64 = 0x0707;
+const I2C_RDWR: u32 = 0x0707;
+
 const I2C_RDRW_IOCTL_MAX_MSGS: u8 = 42;
+const I2C_MAX_LEN: usize = 8192; // Magic value from i2cdev.c
 
 #[repr(C)]
+#[derive(Debug)]
 #[allow(non_camel_case_types)]
-struct Message<'a> {
+struct Message {
     addr: u16,
     flags: u16,
     len: u16,
-    buffer: &'a [u8],
+    buffer: *const u8,
 }
 
-impl<'a> Message<'a> {
-    pub fn read(data: &'a [u8]) -> Message<'a> {
-        if data.len() > std::u16::MAX as usize {
-            panic!("Tried to pack a message greater than {}", std::u16::MAX);
+impl Message {
+    pub fn read(data: &[u8]) -> Message {
+        if data.len() > I2C_MAX_LEN {
+            panic!("Tried to pack a message greater than {}", I2C_MAX_LEN);
         } else {
             Message {
-                addr: 0x1,
-                flags: I2C_M_RD | I2C_M_NOSTART,
+                addr: 0x34,
+                flags: I2C_M_RD,
                 len: data.len() as u16,
-                buffer: data,
+                buffer: data.as_ptr(),
             }
         }
     }
 
-    pub fn write(data: &'a [u8]) -> Message<'a> {
-        if data.len() > std::u16::MAX as usize {
-            panic!("Tried to pack a message greater than {}", std::u16::MAX);
+    pub fn write(data: &[u8]) -> Message {
+        if data.len() > I2C_MAX_LEN as usize {
+            panic!("Tried to pack a message greater than {}", I2C_MAX_LEN);
         } else {
             Message {
-                addr: 0x1,
-                flags: I2C_M_NOSTART,
+                addr: 0x34,
+                flags: 0,
                 len: data.len() as u16,
-                buffer: data,
+                buffer: data.as_ptr(),
             }
         }
     }
 }
+
+ioctl_write_ptr_bad!(i2c_rdrw, I2C_RDWR, IoctlData);
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-struct IoctlData<'a> { 
-    messages: &'a [Message<'a>],
+pub struct IoctlData { 
+    messages: *const Message,
     count: i32,
 }
 
@@ -70,38 +82,45 @@ mod tests {
 
     use super::*;
 
-    /// This mostly exists to make sure I'm coding things properly. The length
-    /// isn't something that's going to break.
     #[test]
     fn build_structure() {
-        let items = [
-            Message::write(&[0u8; 12]),
-            Message::read(&[0u8; 13]),
-            Message::write(&[0u8; 14]),
+        let mut message = [2u8; 1];
+        let mut data = [0u8; 1];
+
+        let mut items = [
+            Message::write(&message),
+            Message::read(&data),
         ];
 
         let i2c_data = IoctlData {
-            messages: &items,
+            messages: items.as_ptr(),
             count: items.len() as i32,
         };
 
-        let file_result = File::open("/dev/i2c-0");
-
-        assert!(i2c_data.messages.len() == 3);
+        let file_result = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/i2c-0");
         assert!(file_result.is_ok());
 
-        unsafe {
-            let r = ioctl(file_result.unwrap().as_raw_fd(), I2C_RDWR, &i2c_data);
+        let file = file_result.unwrap();
+        let fd = file.as_raw_fd();
 
-            // It seems that I2C_RDWR returns negative values on failure?
-            assert!(r >= 0);
+        println!("File descriptor: {}", fd);
+
+        unsafe {
+            println!();
+
+            match i2c_rdrw(fd, &i2c_data) {
+                Err(x) => {
+                    println!("Error: {:?}", x);
+                    panic!("ioclt failed!");
+                },
+                Ok(x) => {
+                    println!("Ok: {:?}", x);
+                    println!("Data: {:?}", data);
+                },
+            }
         }
     }
-
-    /*
-    pub unsafe fn spi_read_mode(fd: c_int, data: *mut u8) -> Result<c_int> {
-        let res = libc::ioctl(fd, ior!(SPI_IOC_MAGIC, SPI_IOC_TYPE_MODE, mem::size_of::<u8>()), data);
-        Errno::result(res)
-    }
-    */
 }
